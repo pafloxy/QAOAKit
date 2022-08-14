@@ -1,8 +1,11 @@
 # QAOA circuits
 
+from lib2to3.pgen2.token import OP
+from turtle import penup
 import networkx as nx
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, Aer, execute
 from qiskit.compiler import transpile
+from qiskit.quantum_info import Operator, Pauli, PauliList
 import numpy as np
 from itertools import count as itcount
 
@@ -78,6 +81,7 @@ def append_zzzz_term(qc, q1, q2, q3, q4, angle):
 
 
 def append_4_qubit_pauli_rotation_term(qc, q1, q2, q3, q4, beta, pauli="zzzz"):
+    print("inside-> append_4_qubit_pauli")
     allowed_symbols = set("xyz")
     if set(pauli).issubset(allowed_symbols) and len(pauli) == 4:
         if pauli[0] == "x":
@@ -182,6 +186,7 @@ def get_tsp_cost_operator_circuit(G, gamma, pen=0, encoding="onehot"):
     qc : qiskit.QuantumCircuit
         Quantum circuit implementing the TSP phase unitary
     """
+    print("inside-> tsp_cost_operator_circuit") ##checkflag
     if encoding == "onehot":
         N = G.number_of_nodes()
         if not nx.is_weighted(G):
@@ -190,15 +195,97 @@ def get_tsp_cost_operator_circuit(G, gamma, pen=0, encoding="onehot"):
         for n in range(N): # cycle over all cities in the input ordering
             for u in range(N):
                 for v in range(N): #road from city v to city u
+
                     q1 = (n*N + u) % (N**2)
                     q2 = ((n+1)*N + v) % (N**2)
                     if G.has_edge(u, v):
                         append_zz_term(qc, q1, q2, gamma * G[u][v]["weight"])
+
+                    q1 = (n*N + u - 1) % (N**2)
+                    q2 = ((n+1)*N + v - 1) % (N**2)
+                    if G.has_edge(u, v):                                               ## modified the phase hamiltonian @pafloxy
+                        # append_zz_term(qc, q1, q2, gamma * G[u][v]["weight"]) 
+                        qc.cp( gamma * G[u][v]["weight"], q1, q2)
+
                     else:
-                        append_zz_term(qc, q1, q2, gamma * pen)
+                        # append_zz_term(qc, q1, q2, gamma * pen)
+                        qc.cp( gamma * pen, q1, q2)
                         pass
         return qc
 
+
+
+def get_tsp_hamiltonian_single( cost_q1_q2, q1, q2, N): ## @pafloxy
+    print("inside-> get_tsp_single, qubits:", [q1,q2]) ##checkflag
+
+    ## define single qubit operator ~
+    op = Operator( 0.5*( Pauli('Z').to_matrix() + Pauli('I').to_matrix()))
+
+    ## initiate multi-qubit operator ~
+    string = ''
+    for i in range(q1): string+= 'I'
+    hamil = Operator(Pauli(string).to_matrix())
+
+    hamil = hamil.tensor(op)
+    for i in range(q1+1 , q2 ) :
+        hamil = hamil.tensor( Operator(Pauli('I').to_matrix()) )
+    hamil = hamil.tensor(op)
+    for i in range(q2+1 , N ) :
+        hamil = hamil.tensor( Operator(Pauli('I').to_matrix()) )
+
+    hamil = Operator(cost_q1_q2 * hamil)
+
+    return hamil
+
+
+
+def get_tsp_cost_operator_hamiltonian(G, pen=0, encoding= "onehot"):  ## @pafloxy
+    """
+    Generates the Hamiltonian operator encoding the TSP cost function
+
+    Parameters
+    ----------
+    G : networkx.Graph
+        Graph to solve TSP on
+    pen :
+        Penalty for edges with no roads
+    encoding : string, default "onehot"
+        Type of encoding for the city ordering
+
+    Returns
+    -------
+    qc : qiskit.QuantumCircuit
+        Quantum circuit implementing the TSP phase unitary
+    """
+    print("inside-> tsp_cost_operator_hamiltonian") ##checkflag
+    if encoding == "onehot":
+        N = G.number_of_nodes()
+        num_qubits= N**2
+        if not nx.is_weighted(G):
+            raise ValueError("Provided graph is not weighted")
+        
+        ## initiate hamiltonian ~
+        hamiltonian = Operator(np.zeros((2,2)))
+        for q in range(num_qubits-1):
+            hamiltonian = Operator(np.zeros((2,2))).tensor(hamiltonian)
+
+        ## add weight terms to the hamiltonian
+        for n in range(N): # cycle over all cities in the input ordering
+            for u in range(N):
+                for v in range(N): #road from city v to city u
+                    
+                    print('hamiltonian :', hamiltonian)
+
+                    q1 = (n*N + u - 1) % (N**2)
+                    q2 = ((n+1)*N + v - 1) % (N**2)
+                    if G.has_edge(u, v):                                              
+                        hamiltonian+= get_tsp_hamiltonian_single( G[u][v]["weight"], q1, q2, num_qubits )
+                    elif pen!= 0:
+                        hamiltonian+= get_tsp_hamiltonian_single( pen, q1, q2, num_qubits )
+                        pass
+        return hamiltonian
+
+    
 
 def get_ordering_swap_partial_mixing_circuit(G, i, j, u, v, beta, T, encoding="onehot"):
     """
@@ -245,17 +332,23 @@ def get_ordering_swap_partial_mixing_circuit(G, i, j, u, v, beta, T, encoding="o
 
 
 def get_color_parity_ordering_swap_mixer_circuit(G, beta, T, encoding="onehot"):
+    print("inside-> tsp_color_parity_mixer_circuit") ##checkflag
     if encoding == "onehot":
         N = G.number_of_nodes()
         qc = QuantumCircuit(N**2)
         G = misra_gries_edge_coloring(G)
         colors = nx.get_edge_attributes(G, "misra_gries_color")
         for c in colors.values():
+
+
+            print("implemnting-> ")
+
             for i in range(0,N-1,2):
                 for u, v in G.edges:
                     if G[u][v]["misra_gries_color"] == c:
                         qc = qc.compose(get_ordering_swap_partial_mixing_circuit(
                             G, i, i+1, u, v, beta, T, encoding="onehot"))
+                            
             for i in range(1,N-1,2):
                 for u, v in G.edges:
                     if G[u][v]["misra_gries_color"] == c:
@@ -269,7 +362,7 @@ def get_color_parity_ordering_swap_mixer_circuit(G, beta, T, encoding="onehot"):
         return qc
 
 
-def get_tsp_init_circuit(G, encoding="onehot"):
+def get_tsp_init_circuit(G, encoding="onehot"):  ## mgiht be a bug here 
     if encoding == "onehot":
         N = G.number_of_nodes()
         qc = QuantumCircuit(N**2)
@@ -279,7 +372,7 @@ def get_tsp_init_circuit(G, encoding="onehot"):
 
 
 def get_tsp_qaoa_circuit(
-    G, beta, gamma, T=1, pen=2, transpile_to_basis=True, save_state=True, encoding="onehot"
+    G, beta, gamma, T=1, pen=2, transpile_to_basis=True,insert_barriers= True, save_state=True, encoding="onehot"
 ):
     if encoding == "onehot":
         assert len(beta) == len(gamma)
@@ -292,6 +385,7 @@ def get_tsp_qaoa_circuit(
         # second, apply p alternating operators
         for i in range(p):
             qc = qc.compose(get_tsp_cost_operator_circuit(G, gamma[i], pen, encoding="onehot"))
+            if insert_barriers: qc.barrier() 
             qc = qc.compose(get_color_parity_ordering_swap_mixer_circuit(G, beta[i], T, encoding="onehot"))
         if transpile_to_basis:
             qc = transpile(qc, optimization_level=0, basis_gates=["u1", "u2", "u3", "cx"])
