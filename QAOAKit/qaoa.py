@@ -8,6 +8,8 @@ from qiskit.compiler import transpile
 from qiskit.quantum_info import Operator, Pauli, PauliList
 import numpy as np
 from itertools import count as itcount
+import math
+from typing import Union, Optional
 
 
 def misra_gries_edge_coloring(G):
@@ -185,7 +187,9 @@ def get_tsp_cost_operator_circuit(G, gamma, pen=0, encoding="onehot"):
     -------
     qc : qiskit.QuantumCircuit
         Quantum circuit implementing the TSP phase unitary
+    
     """
+    
     print("inside-> tsp_cost_operator_circuit") ##checkflag
     if encoding == "onehot":
         N = G.number_of_nodes()
@@ -212,6 +216,54 @@ def get_tsp_cost_operator_circuit(G, gamma, pen=0, encoding="onehot"):
                         qc.cp( gamma * pen, q1, q2)
                         pass
         return qc
+
+
+
+def is_valid_path( path:str, graph: Optional[Union[nx.Graph, None]]= None)-> bool:
+    
+    ## check if the path is valid wrt. to feasibility ~
+    n = int(np.sqrt(len(path)))
+    if path.count('1') != int(np.sqrt(len(path)) ): return False
+    rep_matrix= np.zeros((n,n), dtype= int)
+    for index, val in enumerate(path) :
+        if val== '1':
+            u = index % n
+            i = math.floor(index/n)
+            rep_matrix[ i, u] = 1
+    for index in n :
+        if np.count_nonzero(rep_matrix[index] ) <= 1 : return False
+    
+    ## check if path is valid wrt. to graph ~
+    if isinstance(graph, nx.Graph):
+        for i in range(n) :
+            city_i = np.where( rep_matrix[i%n] == 1)[0]
+            city_j = np.where( rep_matrix[(i+1)%n] == 1)[0]
+            if (city_i, city_j) not in graph.edges: return False
+
+    return True
+
+
+
+def get_tsp_cost( path:str, graph:nx.Graph )-> float: ##pafloxy
+
+    if is_valid_path(path, graph):
+        n = int(np.sqrt(len(path)))
+        rep_matrix= np.zeros((n,n), dtype= int)
+        for index, val in enumerate(path) :
+            if val== '1':
+                u = index % n
+                i = math.floor(index/n)
+                rep_matrix[ i, u] = 1
+       
+        cost= 0
+        for i in range(n) :
+            city_i = np.where( rep_matrix[i%n] == 1)[0]
+            city_j = np.where( rep_matrix[(i+1)%n] == 1)[0]
+            cost += graph.get_edge_data(city_i, city_j)['weight']
+
+        return cost
+
+    else : raise ValueError("solution string is not a valid path")
 
 
 
@@ -283,6 +335,7 @@ def get_tsp_cost_operator_hamiltonian(G, pen=0, encoding= "onehot"):  ## @paflox
                     elif pen!= 0:
                         hamiltonian+= get_tsp_hamiltonian_single( pen, q1, q2, num_qubits )
                         pass
+
         return hamiltonian
 
     
@@ -340,9 +393,7 @@ def get_color_parity_ordering_swap_mixer_circuit(G, beta, T, encoding="onehot"):
         colors = nx.get_edge_attributes(G, "misra_gries_color")
         for c in colors.values():
 
-
-            print("implemnting-> ")
-
+            # print("implemnting-> ")
             for i in range(0,N-1,2):
                 for u, v in G.edges:
                     if G[u][v]["misra_gries_color"] == c:
@@ -392,6 +443,9 @@ def get_tsp_qaoa_circuit(
         if save_state:
             qc.save_state()
         return qc
+
+
+# def 
 
 
 def get_maxcut_qaoa_circuit(
